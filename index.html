@@ -101,6 +101,9 @@ body.bw-mode .seat-card .absolute{display:none!important;}
       <button onclick="showScreen('start-screen')" class="text-sm text-gray-500 hover:text-gray-800 bg-white border border-gray-300 px-3 py-1.5 rounded-lg shadow-sm transition">← 홈으로</button>
       <h1 class="text-xl font-extrabold text-gray-800">🎯 분리 배치 설정</h1>
     </div>
+    <div class="bg-red-50 border-l-4 border-red-500 p-4 rounded-lg mb-4 text-sm text-red-900 leading-relaxed font-semibold">
+      <b>⚠️ 중요:</b> 먼저 <b>'🪑 자리 배치 시작'</b>에서 <b>명렬표를 업로드</b>한 후, 학생 데이터가 로드된 상태에서 분리배치 설정을 진행해주세요.
+    </div>
     <div class="bg-purple-50 border-l-4 border-purple-400 p-4 rounded-lg mb-4 text-sm text-gray-700 leading-relaxed">
       <b>📌 사용 방법:</b> 왼쪽 학생 명단에서 학생을 <b>드래그</b>해서 오른쪽 그룹에 놓으세요.<br>
       같은 그룹 내 학생들은 자리 배치 시 <b>상하좌우·대각선</b> 인접 배치되지 않습니다.
@@ -605,6 +608,17 @@ function toggleBWMode(){
 }
 function showToast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),3000);}
 </script>
+
+<!-- 하단 푸터 영역 -->
+<footer class="no-print bg-white border-t border-gray-200 py-3 px-6 text-center text-xs font-medium text-gray-500 shadow-[0_-2px_10px_rgba(0,0,0,0.05)] z-20">
+  <span class="inline-block mr-4">만든 사람: 경기도 지구과학 교사 뀨짱</span>
+  <span class="inline-block mr-4">
+    문의: <a href="https://open.kakao.com/o/s7hVU65h" target="_blank" class="text-blue-600 hover:text-blue-800 hover:underline transition">카카오톡 오픈채팅</a>
+  </span>
+  <span class="inline-block">
+    블로그: <a href="https://eduarchive.tistory.com/" target="_blank" class="text-blue-600 hover:text-blue-800 hover:underline transition">뀨짱쌤의 교육자료 아카이브</a>
+  </span>
+</footer>
 </body>
 </html>
 
