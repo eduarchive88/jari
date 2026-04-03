@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>교실 자리 배치</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&display=swap');
+body{font-family:'Noto Sans KR',sans-serif;background:#f3f4f6;margin:0;}
+.screen{display:none;} .screen.active{display:flex;}
+.dragging{opacity:0.5;transform:scale(0.95);}
+.drag-over{border-color:#3b82f6!important;background-color:#eff6ff!important;box-shadow:0 0 0 2px #bfdbfe;}
+.seat-drag-over{border-color:#6366f1!important;background:#eef2ff!important;box-shadow:0 0 0 2px #c7d2fe;}
+.toast{position:fixed;top:1.5rem;left:50%;transform:translateX(-50%) translateY(-120px);background:linear-gradient(135deg,#48bb78,#38a169);color:white;padding:.75rem 1.5rem;border-radius:10px;font-weight:600;font-size:.9rem;opacity:0;transition:all .4s;z-index:9999;pointer-events:none;}
+.toast.show{transform:translateX(-50%) translateY(0);opacity:1;}
+::-webkit-scrollbar{width:5px;} ::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:4px;}
+.sep-student-chip{cursor:grab;user-select:none;}
+.sep-student-chip.dragging-chip{opacity:0.4;}
+.sep-group-drop{min-height:48px;transition:all .2s;}
+.sep-group-drop.chip-over{background:#ede9fe!important;border-color:#7c3aed!important;}
+.seat-card.shuffling{animation:seatShuffle 0.5s ease-in-out;}
+@keyframes seatShuffle{
+  0%,100%{transform:scale(1) rotate(0deg);}
+  25%{transform:scale(1.1) rotate(-4deg);}
+  75%{transform:scale(1.1) rotate(4deg);}
+}
+@keyframes flipOut{
+  0%{opacity:1;transform:rotateY(0deg);}
+  100%{opacity:0;transform:rotateY(90deg);}
+}
+@keyframes flipIn{
+  0%{opacity:0;transform:rotateY(-90deg);}
+  100%{opacity:1;transform:rotateY(0deg);}
+}
+#classroom-layout{perspective:1000px;}
+@media print{
+  @page{size:A4 landscape;margin:0;}
+  *{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;}
+  html,body{width:100%;height:100%;background:white;}
+  .no-print{display:none!important;}
+  main{padding:0!important;}
+  aside{display:none!important;}
+  #seating-screen{display:flex!important;}
+  main{padding:0!important;background:white!important;}
+  #classroom-container{width:100vw!important;height:100vh!important;max-width:none!important;margin:0!important;padding:8mm 12mm!important;box-shadow:none!important;border:none!important;display:flex!important;flex-direction:column!important;border-radius:0!important;box-sizing:border-box!important;}
+  #display-title{font-size:16pt!important;margin-bottom:3mm!important;text-align:center!important;}
+  #board-area .w-2\/3{height:10mm!important;font-size:11pt!important;}
+  #classroom-layout{gap:3mm!important;flex:1!important;display:flex!important;justify-content:space-evenly!important;}
+  #seats-grid{gap:2mm!important;flex:1!important;display:grid!important;align-content:space-evenly!important;}
+  .seat-card{height:80px!important;border-radius:2mm!important;display:flex!important;flex-direction:column!important;align-items:center!important;justify-content:center!important;padding:1mm!important;box-sizing:border-box!important;}
+  .seat-card.occupied{border:2pt solid #3b82f6!important;background:#eff6ff!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+  .seat-card.locked{border:2pt solid #d97706!important;background:#fef3c7!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+  .seat-card.empty-seat{border:1pt dashed #ccc!important;background:white!important;}
+  .seat-card .text-xs{font-size:9pt!important;margin-bottom:0!important;}
+  .seat-name{font-size:13pt!important;font-weight:700!important;line-height:1.2!important;}
+  .seat-card .absolute{display:none!important;}
+  .no-print{display:none!important;}
+  body.bw-mode .seat-card.occupied{border:2pt solid #000!important;background:white!important;}
+  body.bw-mode .seat-card.locked{border:2pt solid #000!important;background:white!important;}
+}
+body.bw-mode #classroom-container{background:white!important;}
+body.bw-mode .bg-emerald-800{background:white!important;border:2px solid black!important;box-shadow:none!important;}
+body.bw-mode .border-emerald-900{border-color:black!important;}
+body.bw-mode .text-emerald-100{color:black!important;}
+body.bw-mode .seat-card.occupied{background:white!important;border-color:black!important;color:black!important;}
+body.bw-mode .seat-card.locked{background:white!important;border-color:black!important;color:black!important;}
+body.bw-mode .seat-card .text-blue-500{color:black!important;}
+body.bw-mode .seat-card .text-xs{color:black!important;}
+body.bw-mode .seat-card .absolute{display:none!important;}
+</style>
+</head>
+<body class="text-gray-800">
+<div class="toast" id="toast"></div>
+
+<!-- 시작 화면 -->
+<div id="start-screen" class="screen active min-h-screen flex-col items-center justify-center bg-gradient-to-br from-indigo-500 to-purple-600">
+  <div class="bg-white rounded-2xl shadow-2xl p-10 w-full max-w-md text-center">
+    <div class="text-5xl mb-3">🪑</div>
+    <h1 class="text-2xl font-extrabold text-gray-800 mb-1">교실 자리 배치</h1>
+    <p class="text-sm text-gray-400 mb-8">엑셀 명렬표 업로드 · 분리배치 · 드래그 이동 · 자동저장</p>
+    <div class="flex flex-col gap-4">
+      <button onclick="showScreen('seating-screen');loadData();" class="bg-indigo-600 hover:bg-indigo-700 text-white py-4 px-6 rounded-xl font-bold text-lg transition shadow hover:-translate-y-0.5">
+        🪑 자리 배치 시작
+        <p class="text-xs font-normal mt-1 opacity-80">학생들 앞에서 자리 배치 진행</p>
+      </button>
+      <button onclick="showScreen('separation-screen');loadSepScreen();" class="bg-purple-600 hover:bg-purple-700 text-white py-4 px-6 rounded-xl font-bold text-lg transition shadow hover:-translate-y-0.5">
+        🎯 분리 배치 설정
+        <p class="text-xs font-normal mt-1 opacity-80">서로 떨어져야 할 학생 그룹 설정 (교사 전용)</p>
+      </button>
+    </div>
+    <p class="text-xs text-gray-400 mt-6 leading-relaxed">⚠️ 분리 배치 설정은 학생들에게 보이지 않게 미리 해두세요<br>💡 처음 사용: 자리 배치에서 명렬표 업로드 → 분리 배치 설정</p>
+  </div>
+</div>
+
+<!-- 분리 배치 설정 화면 -->
+<div id="separation-screen" class="screen min-h-screen flex-col bg-gradient-to-br from-purple-50 to-indigo-50">
+  <div class="max-w-4xl mx-auto w-full p-6">
+    <div class="flex items-center gap-3 mb-6">
+      <button onclick="showScreen('start-screen')" class="text-sm text-gray-500 hover:text-gray-800 bg-white border border-gray-300 px-3 py-1.5 rounded-lg shadow-sm transition">← 홈으로</button>
+      <h1 class="text-xl font-extrabold text-gray-800">🎯 분리 배치 설정</h1>
+    </div>
+    <div class="bg-purple-50 border-l-4 border-purple-400 p-4 rounded-lg mb-4 text-sm text-gray-700 leading-relaxed">
+      <b>📌 사용 방법:</b> 왼쪽 학생 명단에서 학생을 <b>드래그</b>해서 오른쪽 그룹에 놓으세요.<br>
+      같은 그룹 내 학생들은 자리 배치 시 <b>상하좌우·대각선</b> 인접 배치되지 않습니다.
+    </div>
+    <div class="grid grid-cols-3 gap-4">
+      <!-- 왼쪽: 학급 선택 + 학생 명단 -->
+      <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-4 flex flex-col gap-3">
+        <label class="text-xs font-bold text-gray-600">학급 선택</label>
+        <select id="sep-class-select" class="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 outline-none focus:border-purple-400" onchange="onSepClassChange()"></select>
+        <div class="text-xs font-bold text-gray-600 mt-1">학생 명단 (드래그해서 그룹에 추가)</div>
+        <div id="sep-student-pool" class="flex-1 min-h-[200px] flex flex-wrap gap-2 content-start overflow-y-auto p-2 bg-gray-50 rounded-lg border border-gray-200"></div>
+      </div>
+      <!-- 오른쪽: 그룹 목록 -->
+      <div class="col-span-2 flex flex-col gap-3">
+        <div class="flex items-center justify-between">
+          <span class="text-xs font-bold text-gray-600">분리 배치 그룹</span>
+          <div class="flex gap-2">
+            <button onclick="addSepGroup()" class="text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg font-bold transition">+ 그룹 추가</button>
+            <button onclick="clearSepGroups()" class="text-xs bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 px-3 py-1.5 rounded-lg font-bold transition">전체 초기화</button>
+          </div>
+        </div>
+        <div id="sep-groups-container" class="flex flex-col gap-3 overflow-y-auto max-h-[60vh]"></div>
+      </div>
+    </div>
+    <button onclick="saveSepAndGo()" class="w-full mt-4 bg-green-600 hover:bg-green-700 text-white py-3 rounded-xl font-bold text-base transition shadow">✅ 저장하고 자리 배치 시작</button>
+  </div>
+</div>
+
+<!-- 자리 배치 화면 -->
+<div id="seating-screen" class="screen h-screen flex-row overflow-hidden">
+  <!-- 사이드바 -->
+  <aside class="w-80 bg-white border-r border-gray-200 flex flex-col h-full shadow-lg no-print shrink-0">
+    <div class="p-5 border-b border-gray-100 bg-blue-50 shrink-0">
+      <div class="flex items-center justify-between">
+        <h1 class="text-lg font-bold text-blue-800">🪑 교실 자리 배치</h1>
+        <button onclick="showScreen('start-screen')" class="text-xs bg-white border border-blue-200 text-blue-600 px-2 py-1 rounded-lg hover:bg-blue-50 transition">← 홈</button>
+      </div>
+    </div>
+    <!-- 학급 관리 -->
+    <div class="p-4 border-b border-gray-100 bg-gray-50 shrink-0">
+      <div class="flex items-center justify-between mb-2">
+        <label class="text-xs font-bold text-gray-700">학급 관리 (자동저장)</label>
+        <button onclick="addClass()" class="text-xs bg-white border border-blue-300 text-blue-600 px-2 py-0.5 rounded hover:bg-blue-50">+ 학급 추가</button>
+      </div>
+      <select id="class-select" class="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 bg-white outline-none mb-2 shadow-sm font-medium" onchange="switchClass()"></select>
+      <button onclick="deleteCurrentClass()" class="w-full text-xs text-red-500 hover:text-red-700 py-1 flex items-center justify-center gap-1">🗑 현재 학급 삭제</button>
+      <div class="flex gap-2 mt-2 pt-2 border-t border-gray-200">
+        <button onclick="backupData()" class="flex-1 text-[11px] bg-white border border-gray-300 hover:bg-gray-100 text-gray-700 py-1.5 rounded shadow-sm">💾 백업</button>
+        <label class="flex-1 text-[11px] bg-white border border-gray-300 hover:bg-gray-100 text-gray-700 py-1.5 rounded flex items-center justify-center cursor-pointer m-0 shadow-sm">📂 복원<input type="file" accept=".json" class="hidden" onchange="restoreData(event)"></label>
+      </div>
+    </div>
+    <!-- 설정 -->
+    <div class="p-4 border-b border-gray-100 space-y-3 overflow-y-auto shrink-0 max-h-[70vh]">
+      <div>
+        <label class="block text-xs font-semibold text-gray-600 mb-1">학급명 (출력 제목)</label>
+        <input type="text" id="class-title" placeholder="예: 2학년 3반" class="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 outline-none focus:border-blue-400 shadow-sm" oninput="updateTitleAndSave()">
+      </div>
+      <div class="grid grid-cols-2 gap-2">
+        <div>
+          <label class="block text-xs font-semibold text-gray-600 mb-1">총 좌석 수</label>
+          <input type="number" id="count-input" placeholder="25" min="1" max="100" class="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 outline-none focus:border-blue-400 shadow-sm" oninput="updateGridSettings()">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-gray-600 mb-1">열 수</label>
+          <select id="cols-input" class="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 outline-none focus:border-blue-400 shadow-sm" onchange="updateGridSettings()">
+            <option value="4">4열</option><option value="5">5열</option><option value="6" selected>6열</option><option value="7">7열</option><option value="8">8열</option>
+          </select>
+        </div>
+      </div>
+      <div class="bg-yellow-50 p-2 rounded-lg border border-yellow-200 text-[10px] text-yellow-800 leading-snug"><b>📥 나이스 명렬표:</b> [학급담임]-[기본학적관리]-[명렬표출력]-xls 저장 또는 [출결관리]→[교과시간별출석부출력]→xls 저장 후 업로드</div>
+      <div>
+        <div class="flex items-center justify-between mb-1">
+          <label class="text-xs font-semibold text-gray-600">명렬표 업로드 (XLS/XLSX/CSV)</label>
+          <button onclick="downloadSample()" class="text-[10px] bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded text-blue-700 hover:bg-blue-100">샘플↓</button>
+        </div>
+        <input type="file" id="excel-upload" accept=".csv,.xls,.xlsx" class="block w-full text-xs text-gray-500 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-gray-100 file:text-gray-700 hover:file:bg-gray-200 cursor-pointer">
+      </div>
+      <div id="sep-status" class="hidden"></div>
+      <button onclick="toggleTeacherView()" id="view-toggle-btn" class="w-full bg-sky-600 hover:bg-sky-700 text-white py-2 rounded-lg text-sm font-bold transition shadow-sm">🔄 교사 시점 (칠판 아래로)</button>
+      <div class="grid grid-cols-2 gap-2">
+        <button onclick="sequentialSeats()" class="bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg text-sm font-bold transition shadow-sm">📋 번호순 배치</button>
+        <button onclick="shuffleSeats()" class="bg-indigo-600 hover:bg-indigo-700 text-white py-2 rounded-lg text-sm font-bold transition shadow-sm">🔀 랜덤 배치</button>
+      </div>
+      <button onclick="window.print()" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 rounded-lg text-sm font-bold transition shadow-sm">🖨 출력하기 (A4 가로 한 장)</button>
+      <button onclick="toggleBWMode()" id="bw-btn" class="w-full bg-gray-600 hover:bg-gray-700 text-white py-2 rounded-lg text-sm font-bold transition shadow-sm">⚫ 흑백 모드 OFF</button>
+    </div>
+  </aside>
+  <!-- 메인 -->
+  <main class="flex-1 flex flex-col bg-gray-200 overflow-auto relative p-6">
+    <div class="flex-1 min-h-max flex items-center justify-center">
+      <div id="classroom-container" class="bg-white rounded-2xl shadow-xl p-10 w-full max-w-5xl flex flex-col items-center">
+        <h1 id="display-title" class="text-3xl font-extrabold text-center mb-6 text-gray-800 w-full empty:hidden min-h-[40px]"></h1>
+        <div id="classroom-layout" class="flex flex-col w-full items-center gap-10 transition-all duration-500">
+          <div id="board-area" class="w-full flex flex-col items-center gap-2 transition-all duration-500">
+            <div class="w-2/3 max-w-lg h-14 bg-emerald-800 rounded-lg flex items-center justify-center shadow-inner border-4 border-emerald-900">
+              <span class="text-emerald-100 font-bold tracking-[0.5em] text-lg">칠판</span>
+            </div>
+          </div>
+          <div id="seats-grid" class="w-full grid gap-3"></div>
+        </div>
+        <div class="no-print flex gap-5 justify-center mt-6 pt-4 border-t border-gray-200 flex-wrap text-sm text-gray-600 w-full">
+          <div class="flex items-center gap-1.5"><div class="w-5 h-5 rounded border-2 border-dashed border-gray-300 bg-white"></div>빈 좌석</div>
+          <div class="flex items-center gap-1.5"><div class="w-5 h-5 rounded border-2 border-blue-400 bg-blue-50"></div>배치된 좌석</div>
+          <div class="flex items-center gap-1.5"><div class="w-5 h-5 rounded border-2 border-yellow-500 bg-yellow-50"></div>고정 좌석</div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+<script>
+const STORAGE_KEY='classroomSeatingV4';
+let appState={classes:[],currentClassId:null};
+let isBWMode=false,isTeacherView=false,separationGroups=[];
+let dragSepStudentId=null;
+
+function showScreen(id){document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));document.getElementById(id).classList.add('active');}
+function saveData(){localStorage.setItem(STORAGE_KEY,JSON.stringify(appState));}
+function loadData(){
+  const s=localStorage.getItem(STORAGE_KEY);
+  if(s){try{appState=JSON.parse(s);}catch(e){}}
+  if(!appState.classes?.length){const c=newClass('새 학급 1');appState.classes=[c];appState.currentClassId=c.id;}
+  else if(!appState.currentClassId){appState.currentClassId=appState.classes[0].id;}
+  const sg=localStorage.getItem('separationGroups');
+  updateSepStatus();syncUI();
+}
+function newClass(name){return{id:'class_'+Date.now(),name,title:name,students:[],totalSeats:25,cols:6,isTeacherView:false};}
+function getCur(){return appState.classes.find(c=>c.id===appState.currentClassId);}
+
+function addClass(){const n=prompt('새 학급 이름');if(!n?.trim())return;const c=newClass(n.trim());appState.classes.push(c);appState.currentClassId=c.id;saveData();syncUI();}
+function deleteCurrentClass(){
+  if(appState.classes.length<=1)return alert('최소 1개 학급 필요');
+  if(!confirm(`'${getCur().name}' 삭제?`))return;
+  appState.classes=appState.classes.filter(c=>c.id!==appState.currentClassId);
+  appState.currentClassId=appState.classes[0].id;saveData();syncUI();
+}
+function switchClass(){appState.currentClassId=document.getElementById('class-select').value;saveData();syncUI();}
+function updateTitleAndSave(){
+  const cur=getCur(),val=document.getElementById('class-title').value;
+  cur.title=val;cur.name=val.trim()||'새 학급';
+  document.getElementById('display-title').innerText=val;
+  const opt=document.querySelector(`#class-select option[value="${cur.id}"]`);
+  if(opt)opt.text=cur.name;saveData();
+}
+function updateGridSettings(){
+  const cur=getCur();
+  const v=parseInt(document.getElementById('count-input').value);
+  if(v&&v>0)cur.totalSeats=v;
+  cur.cols=parseInt(document.getElementById('cols-input').value)||6;
+  // 좌석 수 변경 시 초과 학생 처리
+  const total=cur.totalSeats;
+  cur.students.forEach(s=>{if(s.seatIdx!==null&&s.seatIdx>=total)s.seatIdx=null;});
+  saveData();renderClassroom();renderUnassignedList();
+}
+function syncUI(){
+  const cur=getCur();if(!cur)return;
+  const sel=document.getElementById('class-select');sel.innerHTML='';
+  appState.classes.forEach(c=>{const o=document.createElement('option');o.value=c.id;o.text=c.name;if(c.id===appState.currentClassId)o.selected=true;sel.appendChild(o);});
+  document.getElementById('class-title').value=cur.title||'';
+  document.getElementById('display-title').innerText=cur.title||'';
+  document.getElementById('count-input').value=cur.totalSeats||25;
+  document.getElementById('cols-input').value=cur.cols||6;
+  isTeacherView=cur.isTeacherView||false;
+  applyTeacherViewDOM(isTeacherView);
+  renderClassroom();renderUnassignedList();
+}
+function backupData(){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(appState)],{type:'application/json'}));a.download=`자리배치_백업_${new Date().toISOString().slice(0,10)}.json`;a.click();}
+function restoreData(e){
+  const file=e.target.files[0];if(!file)return;
+  const r=new FileReader();
+  r.onload=ev=>{try{const d=JSON.parse(ev.target.result);if(d?.classes){if(confirm('덮어씁니다. 계속?')){appState=d;saveData();syncUI();showToast('✅ 복원 완료!');}}else alert('올바른 파일이 아닙니다.');}catch{alert('파일 읽기 오류');}e.target.value='';};
+  r.readAsText(file);
+}
+
+// 엑셀 업로드
+document.addEventListener('DOMContentLoaded',()=>{
+  document.getElementById('excel-upload').addEventListener('change',function(e){
+    const file=e.target.files[0];if(!file)return;
+    const r=new FileReader();
+    r.onload=ev=>{
+      try{
+        const wb=XLSX.read(new Uint8Array(ev.target.result),{type:'array'});
+        const json=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1});
+        let nameCol=-1,numCol=-1,students=[];
+        for(let i=0;i<json.length;i++){
+          const row=json[i];if(!Array.isArray(row)||!row.length)continue;
+          if(nameCol===-1){
+            numCol=row.findIndex(c=>typeof c==='string'&&c.replace(/\s/g,'').includes('번호'));
+            nameCol=row.findIndex(c=>{if(typeof c!=='string')return false;const s=c.replace(/\s/g,'');return s.includes('성명')||s.includes('이름');});
+            continue;
+          }
+          if(nameCol!==-1&&row.length>nameCol){
+            const name=String(row[nameCol]||'').trim();
+            const num=numCol!==-1&&row[numCol]!=null?String(row[numCol]).trim():String(students.length+1);
+            if(name&&name!=='undefined'&&isNaN(name))students.push({id:`s_${Date.now()}_${i}`,number:num,name,seatIdx:null,locked:false});
+          }
+        }
+        if(!students.length)return alert("'번호','성명' 열이 있는지 확인해주세요.");
+        const cur=getCur();cur.students=students;
+        if(cur.totalSeats<students.length)cur.totalSeats=students.length;
+        document.getElementById('count-input').value=cur.totalSeats;
+        saveData();syncUI();sequentialSeats();
+        showToast(`✅ ${students.length}명 업로드 완료!`);
+      }catch(err){console.error(err);alert('파일 읽기 오류');}
+      e.target.value='';
+    };r.readAsArrayBuffer(file);
+  });
+  loadData();
+});
+
+function downloadSample(){
+  const ws=XLSX.utils.aoa_to_sheet([['학년','반','번호','성명'],['1','1','1','홍길동'],['1','1','2','박땡땡'],['1','1','3','김땡땡']]);
+  const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'명렬표');XLSX.writeFile(wb,'명렬표_샘플.xlsx');
+}
+
+// 분리 배치 설정 화면
+function getSepKey(classId){return 'separationGroups_'+classId;}
+function loadSepScreen(){
+  const sel=document.getElementById('sep-class-select');sel.innerHTML='';
+  if(!appState.classes?.length){sel.innerHTML='<option>학급 없음</option>';}
+  else{
+    appState.classes.forEach(c=>{const o=document.createElement('option');o.value=c.id;o.text=c.name;sel.appendChild(o);});
+    if(appState.currentClassId)sel.value=appState.currentClassId;
+  }
+  onSepClassChange();
+}
+function onSepClassChange(){
+  const classId=document.getElementById('sep-class-select').value;
+  const sg=localStorage.getItem(getSepKey(classId));
+  separationGroups=sg?JSON.parse(sg):[];
+  const cls=appState.classes.find(c=>c.id===classId);
+  const pool=document.getElementById('sep-student-pool');pool.innerHTML='';
+  if(!cls?.students.length){pool.innerHTML='<div class="text-xs text-red-400 p-2">이 학급에 명렬표가 없습니다.</div>';renderSepGroups();return;}
+  cls.students.forEach(s=>{
+    const chip=document.createElement('div');
+    chip.className='sep-student-chip bg-white border border-gray-300 rounded-full px-3 py-1 text-xs font-medium text-gray-700 shadow-sm hover:border-purple-400 hover:bg-purple-50 transition';
+    chip.draggable=true;chip.dataset.sid=s.id;chip.dataset.name=s.name;
+    chip.textContent=`${s.number}. ${s.name}`;
+    chip.addEventListener('dragstart',e=>{dragSepStudentId=s.id;e.dataTransfer.setData('sepStudentName',s.name);chip.classList.add('dragging-chip');});
+    chip.addEventListener('dragend',()=>chip.classList.remove('dragging-chip'));
+    pool.appendChild(chip);
+  });
+  renderSepGroups();
+}
+
+function renderSepGroups(){
+  const c=document.getElementById('sep-groups-container');c.innerHTML='';
+  separationGroups.forEach((group,idx)=>{
+    const div=document.createElement('div');
+    div.className='bg-white rounded-xl  border-gray-200 shadow-sm p-3';
+    div.innerHTML=`
+      <div class="flex justify-between items-center mb-2">
+        <span class="text-sm font-bold text-gray-700">그룹 ${idx+1}</span>
+        <button onclick="removeSepGroup(${idx})" class="text-red-400 hover:text-red-600 text-xs">삭제</button>
+      </div>
+      <div class="sep-group-drop min-h-[48px] flex flex-wrap gap-2 p-2 bg-purple-50 rounded-lg border-2 border-dashed border-purple-200" data-gidx="${idx}"></div>`;
+    const dropZone=div.querySelector('.sep-group-drop');
+    group.forEach(name=>{
+      const chip=document.createElement('div');
+      chip.className='bg-purple-100 border border-purple-300 rounded-full px-3 py-1 text-xs font-medium text-purple-800 flex items-center gap-1';
+      chip.innerHTML=`${name}<button onclick="removeSepStudent(${idx},'${name}')" class="ml-1 text-purple-400 hover:text-red-500 font-bold">×</button>`;
+      dropZone.appendChild(chip);
+    });
+    dropZone.addEventListener('dragover',e=>{e.preventDefault();dropZone.classList.add('chip-over');});
+    dropZone.addEventListener('dragleave',()=>dropZone.classList.remove('chip-over'));
+    dropZone.addEventListener('drop',e=>{
+      e.preventDefault();dropZone.classList.remove('chip-over');
+      const name=e.dataTransfer.getData('sepStudentName');
+      if(!name)return;
+      if(!separationGroups[idx].includes(name)){separationGroups[idx].push(name);renderSepGroups();}
+    });
+    c.appendChild(div);
+  });
+}
+function addSepGroup(){separationGroups.push([]);renderSepGroups();}
+function removeSepGroup(idx){separationGroups.splice(idx,1);renderSepGroups();}
+function removeSepStudent(gidx,name){separationGroups[gidx]=separationGroups[gidx].filter(n=>n!==name);renderSepGroups();}
+function clearSepGroups(){separationGroups=[];localStorage.removeItem('separationGroups');renderSepGroups();showToast('🔄 초기화 완료');}
+function saveSepAndGo(){
+  const classId=document.getElementById('sep-class-select').value;
+  separationGroups=separationGroups.filter(g=>g.length>0);
+  localStorage.setItem(getSepKey(classId),JSON.stringify(separationGroups));
+  // 현재 자리배치 화면의 학급과 같으면 메모리도 갱신
+  if(classId===appState.currentClassId){
+    const sg=localStorage.getItem(getSepKey(appState.currentClassId));
+    separationGroups=sg?JSON.parse(sg):[];
+  }
+  updateSepStatus();showToast('✅ 분리 배치 저장 완료!');showScreen('seating-screen');loadData();
+}
+function updateSepStatus(){
+  // 분리 배치 상태는 학생들에게 보이지 않도록 표시하지 않음
+  // 자리배치 화면 로드 시 현재 학급의 분리배치 그룹 불러오기
+  if(appState.currentClassId){
+    const sg=localStorage.getItem(getSepKey(appState.currentClassId));
+    separationGroups=sg?JSON.parse(sg):[];
+  }
+}
+
+// 자리 배치 렌더링
+function renderClassroom(){
+  const cur=getCur();if(!cur)return;
+  const grid=document.getElementById('seats-grid');grid.innerHTML='';
+  const total=cur.totalSeats||25,cols=cur.cols||6;
+  
+  // 회전 효과 추가 (모둠자리배치.html 방식)
+  const gridRotationClass=isTeacherView?'rotate-180':'';
+  grid.className=`w-full grid gap-3 transition-transform duration-500 ${gridRotationClass}`;
+  
+  // 5열일 때는 간격 없이, 그 외는 2열마다 통로 공간 추가
+  let templateCols='';
+  if(cols===5){
+    templateCols='repeat(5, 1fr)';
+  }else{
+    for(let c=0;c<cols;c++){
+      if(c>0&&c%2===0)templateCols+=' 1rem';
+      templateCols+=' 1fr';
+    }
+  }
+  grid.style.gridTemplateColumns=templateCols.trim();
+
+  // flex-col-reverse가 시각적 역순을 처리하므로, 행 순서는 그대로 유지
+  const rows=Math.ceil(total/cols);
+
+  for(let r=0;r<rows;r++){
+    for(let c=0;c<cols;c++){
+      const i=r*cols+c;
+      if(i>=total) break;
+      if(c>0&&c%2===0&&cols!==5){const aisle=document.createElement('div');aisle.className='';grid.appendChild(aisle);}
+    const student=cur.students.find(s=>s.seatIdx===i);
+    const seat=document.createElement('div');
+    seat.dataset.seatIdx=i;
+    
+    // 교사 시점에서 각 좌석도 180도 회전 (모둠자리배치.html 방식)
+    const seatRotationClass=isTeacherView?'rotate-180':'';
+    
+    if(student){
+      seat.className=`seat-card occupied relative h-20 rounded-lg flex flex-col items-center justify-center border-2 border-blue-400 bg-blue-50 shadow-sm cursor-grab transition-all duration-200 student-item ${seatRotationClass}`;
+      seat.draggable=true;
+      seat.innerHTML=`<div class="text-xs font-bold text-blue-500 mb-0.5">${student.number}번</div><div class="seat-name font-bold text-gray-800 text-base leading-tight">${student.name}</div>`;
+      if(student.locked){seat.classList.replace('border-blue-400','border-yellow-500');seat.classList.replace('bg-blue-50','bg-yellow-50');seat.innerHTML+=`<div class="absolute top-1 right-1 text-xs">🔒</div>`;}
+      seat.addEventListener('dragstart',e=>{e.dataTransfer.setData('studentId',student.id);setTimeout(()=>seat.classList.add('dragging'),0);});
+      seat.addEventListener('dragend',()=>seat.classList.remove('dragging'));
+      seat.addEventListener('click',e=>{if(!e.ctrlKey)toggleLock(student.id);});
+      seat.addEventListener('dblclick',()=>{});
+    }else{
+      const isClosed=cur.closedSeats?.includes(i);
+      if(isClosed){
+        seat.className=`seat-card closed-seat h-20 rounded-lg flex items-center justify-center border-2 border-gray-400 bg-gray-200 text-gray-500 text-xs transition-all duration-200 cursor-pointer ${seatRotationClass}`;
+        seat.innerHTML='<span class="text-lg">✕</span>';
+      }else{
+        seat.className=`seat-card empty-seat h-20 rounded-lg flex items-center justify-center border-2 border-dashed border-gray-300 bg-white text-gray-300 text-xs transition-all duration-200 cursor-pointer ${seatRotationClass}`;
+        seat.textContent=i+1;
+      }
+      seat.addEventListener('click',()=>toggleCloseSeat(i));
+    }
+    seat.addEventListener('dragover',e=>{e.preventDefault();seat.classList.add('seat-drag-over');});
+    seat.addEventListener('dragleave',()=>seat.classList.remove('seat-drag-over'));
+    seat.addEventListener('drop',e=>{e.preventDefault();seat.classList.remove('seat-drag-over');handleDropOnSeat(e,i);});
+    grid.appendChild(seat);
+    }
+  }
+}
+function renderUnassignedList(){
+  const cur=getCur();const list=document.getElementById('unassigned-list');list.innerHTML='';
+  const unassigned=cur.students.filter(s=>s.seatIdx===null);
+  document.getElementById('unassigned-count').innerText=unassigned.length;
+  if(!unassigned.length){
+    list.innerHTML=cur.students.length?'<div class="text-center py-8 text-sm text-gray-400">모든 학생이 배정되었습니다.</div>':'<div class="text-center py-8 text-sm text-gray-400">명렬표를 업로드 해주세요.</div>';
+    return;
+  }
+  unassigned.forEach(s=>{
+    const el=document.createElement('div');
+    el.className='bg-white p-3 rounded-lg shadow-sm border border-gray-200 cursor-grab flex items-center gap-3 hover:border-blue-400 hover:shadow-md transition-all student-item';
+    el.draggable=true;
+    el.innerHTML=`<div class="w-6 h-6 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-xs font-bold flex-shrink-0">${s.number}</div><div class="font-medium text-gray-800 truncate">${s.name}</div>`;
+    el.addEventListener('dragstart',e=>{e.dataTransfer.setData('studentId',s.id);setTimeout(()=>el.classList.add('dragging'),0);});
+    el.addEventListener('dragend',()=>el.classList.remove('dragging'));
+    list.appendChild(el);
+  });
+}
+function allowDrop(e){e.preventDefault();}
+function handleDropOnSeat(e,seatIdx){
+  const studentId=e.dataTransfer.getData('studentId');if(!studentId)return;
+  const cur=getCur();
+  const dropped=cur.students.find(s=>s.id===studentId);if(!dropped)return;
+  const current=cur.students.find(s=>s.seatIdx===seatIdx);
+  if(current){current.seatIdx=dropped.seatIdx;}
+  dropped.seatIdx=seatIdx;
+  saveData();renderClassroom();renderUnassignedList();
+}
+function handleDropOnList(e){
+  e.preventDefault();const studentId=e.dataTransfer.getData('studentId');if(!studentId)return;
+  const cur=getCur();const s=cur.students.find(s=>s.id===studentId);if(s)s.seatIdx=null;
+  saveData();renderClassroom();renderUnassignedList();
+}
+function toggleLock(studentId){
+  const cur=getCur();const s=cur.students.find(s=>s.id===studentId);if(!s)return;
+  s.locked=!s.locked;saveData();renderClassroom();
+}
+function toggleCloseSeat(idx){
+  const cur=getCur();
+  if(!cur.closedSeats)cur.closedSeats=[];
+  if(cur.closedSeats.includes(idx))cur.closedSeats=cur.closedSeats.filter(i=>i!==idx);
+  else cur.closedSeats.push(idx);
+  saveData();renderClassroom();renderUnassignedList();
+}
+
+// 배치 함수
+function sequentialSeats(){
+  const cur=getCur();if(!cur.students.length)return showToast('⚠️ 먼저 명렬표를 업로드해주세요!');
+  const closed=cur.closedSeats||[];
+  const sorted=[...cur.students].sort((a,b)=>(parseInt(a.number)||0)-(parseInt(b.number)||0));
+  let si=0;
+  for(let i=0;i<cur.totalSeats&&si<sorted.length;i++){if(closed.includes(i))continue;sorted[si].seatIdx=i;si++;}
+  saveData();renderClassroom();renderUnassignedList();showToast('📋 번호순 배치 완료!');
+}
+function shuffleSeats(){
+  const cur=getCur();if(!cur.students.length)return showToast('⚠️ 먼저 명렬표를 업로드해주세요!');
+  const total=cur.totalSeats,cols=cur.cols;
+  const closed=cur.closedSeats||[];
+  document.querySelectorAll('.seat-card.occupied').forEach(s=>s.classList.add('shuffling'));
+  setTimeout(()=>{
+    const locked=cur.students.filter(s=>s.locked&&s.seatIdx!==null);
+    const toAssign=cur.students.filter(s=>!s.locked).map(s=>{s.seatIdx=null;return s;});
+    const available=[];
+    for(let i=0;i<total;i++){if(!locked.find(s=>s.seatIdx===i)&&!closed.includes(i))available.push(i);}
+    const assignments=new Array(total).fill(null);
+    locked.forEach(s=>assignments[s.seatIdx]=s.name);
+    let success=false;
+    for(let attempt=0;attempt<200&&!success;attempt++){
+      const tmp=[...assignments];
+      const sa=[...available].sort(()=>Math.random()-0.5);
+      const ss=[...toAssign].sort(()=>Math.random()-0.5);
+      let ok=true;
+      for(let i=0;i<ss.length;i++){
+        let placed=false;
+        for(let j=0;j<sa.length;j++){
+          const si=sa[(i+j)%sa.length];
+          if(tmp[si]===null&&canPlace(ss[i].name,si,tmp,cols,total)){tmp[si]=ss[i].name;placed=true;break;}
+        }
+        if(!placed){ok=false;break;}
+      }
+      if(ok){
+        toAssign.forEach(s=>{const idx=tmp.indexOf(s.name);if(idx!==-1)s.seatIdx=idx;});
+        success=true;
+      }
+    }
+    if(!success){
+      const sa=[...available].sort(()=>Math.random()-0.5);
+      toAssign.sort(()=>Math.random()-0.5).forEach((s,i)=>{if(sa[i]!=null)s.seatIdx=sa[i];});
+    }
+    saveData();renderClassroom();renderUnassignedList();showToast('🎉 자리 배치 완료!');
+  },500);
+}
+function resetSeats(){
+  if(!confirm('모든 자리를 비울까요?'))return;
+  const cur=getCur();cur.students.forEach(s=>{s.seatIdx=null;s.locked=false;});
+  saveData();renderClassroom();renderUnassignedList();showToast('🔄 초기화 완료');
+}
+function getAdjacentIndices(idx,cols,total){
+  const row=Math.floor(idx/cols),col=idx%cols,totalRows=Math.ceil(total/cols),adj=[];
+  [[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]].forEach(([dr,dc])=>{
+    const nr=row+dr,nc=col+dc;
+    if(nr>=0&&nr<totalRows&&nc>=0&&nc<cols){const ni=nr*cols+nc;if(ni<total)adj.push(ni);}
+  });
+  return adj;
+}
+function canPlace(name,idx,assignments,cols,total){
+  const groups=separationGroups.filter(g=>g.includes(name));if(!groups.length)return true;
+  for(const adjIdx of getAdjacentIndices(idx,cols,total)){
+    const adjName=assignments[adjIdx];if(!adjName)continue;
+    for(const g of groups){if(g.includes(adjName))return false;}
+  }
+  return true;
+}
+function toggleTeacherView(){
+  const cur=getCur();isTeacherView=!isTeacherView;cur.isTeacherView=isTeacherView;saveData();
+  applyTeacherViewDOM(isTeacherView);
+  renderClassroom();
+}
+function applyTeacherViewDOM(isTeacher){
+  const layout=document.getElementById('classroom-layout');
+  const boardArea=document.getElementById('board-area');
+  const btn=document.getElementById('view-toggle-btn');
+  if(isTeacher){
+    layout.classList.replace('flex-col','flex-col-reverse');
+    boardArea.classList.replace('flex-col','flex-col-reverse');
+    btn.textContent='🔄 학생 시점 (칠판 위로)';
+    btn.className='w-full bg-amber-500 hover:bg-amber-600 text-white py-2 rounded-lg text-sm font-bold transition shadow-sm';
+  }else{
+    layout.classList.replace('flex-col-reverse','flex-col');
+    boardArea.classList.replace('flex-col-reverse','flex-col');
+    btn.textContent='🔄 교사 시점 (칠판 아래로)';
+    btn.className='w-full bg-sky-600 hover:bg-sky-700 text-white py-2 rounded-lg text-sm font-bold transition shadow-sm';
+  }
+}
+function toggleBWMode(){
+  isBWMode=!isBWMode;document.body.classList.toggle('bw-mode',isBWMode);
+  const btn=document.getElementById('bw-btn');
+  btn.textContent=isBWMode?'🎨 컬러 모드 ON':'⚫ 흑백 모드 OFF';
+  btn.className=isBWMode?'w-full bg-white border-2 border-gray-800 text-gray-800 py-2 rounded-lg text-sm font-bold transition shadow-sm':'w-full bg-gray-600 hover:bg-gray-700 text-white py-2 rounded-lg text-sm font-bold transition shadow-sm';
+  showToast(isBWMode?'⚫ 흑백 모드 ON':'🎨 컬러 모드 OFF');
+}
+function showToast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),3000);}
+</script>
+</body>
+</html>
+
