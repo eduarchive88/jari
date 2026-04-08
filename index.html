@@ -182,6 +182,13 @@ body.bw-mode .seat-card .absolute{display:none!important;}
         <input type="file" id="excel-upload" accept=".csv,.xls,.xlsx" class="block w-full text-xs text-gray-500 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-gray-100 file:text-gray-700 hover:file:bg-gray-200 cursor-pointer">
       </div>
       <div id="sep-status" class="hidden"></div>
+      <!-- 💡 사용법 가이드 -->
+      <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-900 space-y-2">
+        <div class="font-bold mb-1">💡 사용 방법</div>
+        <div><b>🖱️ 드래그:</b> 학생을 끌어서 다른 자리로 이동</div>
+        <div><b>📌 클릭:</b> 학생 누르면 자리 고정 (🔒 표시)</div>
+        <div><b>❌ 빈칸 클릭:</b> 자리 비활성화 (✕ 표시)</div>
+      </div>
       <button onclick="toggleTeacherView()" id="view-toggle-btn" class="w-full bg-sky-600 hover:bg-sky-700 text-white py-2 rounded-lg text-sm font-bold transition shadow-sm">🔄 교사 시점 (칠판 아래로)</button>
       <div class="grid grid-cols-2 gap-2">
         <button onclick="sequentialSeats()" class="bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg text-sm font-bold transition shadow-sm">📋 번호순 배치</button>
@@ -189,6 +196,11 @@ body.bw-mode .seat-card .absolute{display:none!important;}
       </div>
       <button onclick="window.print()" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 rounded-lg text-sm font-bold transition shadow-sm">🖨 출력하기 (A4 가로 한 장)</button>
       <button onclick="toggleBWMode()" id="bw-btn" class="w-full bg-gray-600 hover:bg-gray-700 text-white py-2 rounded-lg text-sm font-bold transition shadow-sm">⚫ 흑백 모드 OFF</button>
+      <!-- 배치 대기 학생 목록 -->
+      <div class="mt-2">
+        <div class="text-xs font-bold text-gray-600 mb-1">배치 대기 중 (<span id="unassigned-count">0</span>명)</div>
+        <div id="unassigned-list" class="w-full border border-gray-300 rounded-lg bg-gray-50 overflow-y-auto max-h-[150px]"></div>
+      </div>
     </div>
   </aside>
   <!-- 메인 -->
@@ -196,6 +208,9 @@ body.bw-mode .seat-card .absolute{display:none!important;}
     <div class="flex-1 min-h-max flex items-center justify-center">
       <div id="classroom-container" class="bg-white rounded-2xl shadow-xl p-10 w-full max-w-5xl flex flex-col items-center">
         <h1 id="display-title" class="text-3xl font-extrabold text-center mb-6 text-gray-800 w-full empty:hidden min-h-[40px]"></h1>
+        <div class="no-print text-center mb-4 px-4 py-2 bg-indigo-50 rounded-lg border border-indigo-200 text-xs text-indigo-800">
+          <b>📋 안내:</b> 학생을 끌어서 이동 | 클릭으로 고정 | 빈자리 클릭으로 자리 비활성화
+        </div>
         <div id="classroom-layout" class="flex flex-col w-full items-center gap-10 transition-all duration-500">
           <div id="board-area" class="w-full flex flex-col items-center gap-2 transition-all duration-500">
             <div class="w-2/3 max-w-lg h-14 bg-emerald-800 rounded-lg flex items-center justify-center shadow-inner border-4 border-emerald-900">
@@ -285,45 +300,83 @@ document.addEventListener('DOMContentLoaded',()=>{
     r.onload=ev=>{
       try{
         const wb=XLSX.read(new Uint8Array(ev.target.result),{type:'array'});
-        let json=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1});
-        let nameCol=-1,numCol=-1,students=[];
+        const sheetName=wb.SheetNames[0];
+        const worksheet=wb.Sheets[sheetName];
+        let json=XLSX.utils.sheet_to_json(worksheet,{header:1,defval:''});
         
-        // 첫 행(헤더) 찾기 - 빈 행 건너뛰기
-        let headerRowIdx=-1;
+        let nameCol=-1,numCol=-1,students=[],headerRowIdx=-1;
+        
+        // 헤더 찾기 - 첫 10행에서 번호와 성명 열 검색
         for(let i=0;i<Math.min(json.length,10);i++){
           const row=json[i];
-          if(!Array.isArray(row)||!row.length)continue;
-          const rowStr=row.map(c=>String(c||'').replace(/\s/g,'').toLowerCase()).join('');
-          if(rowStr.includes('번호')&&(rowStr.includes('성명')||rowStr.includes('이름'))){
+          if(!Array.isArray(row)||row.length===0)continue;
+          
+          // 각 셀을 문자열로 변환하고 공백제거
+          const normalizedRow=row.map(cell=>{
+            if(cell===null||cell===undefined||cell==='')return '';
+            return String(cell).replace(/\s/g,'').toLowerCase();
+          });
+          
+          // 번호와 성명 열 찾기
+          let hasNum=false,hasName=false;
+          for(let j=0;j<normalizedRow.length;j++){
+            if(normalizedRow[j].includes('번호'))hasNum=true,numCol=j;
+            if(normalizedRow[j].includes('성명')||normalizedRow[j].includes('이름'))hasName=true,nameCol=j;
+          }
+          
+          if(hasNum&&hasName){
             headerRowIdx=i;
-            numCol=row.findIndex(c=>typeof c==='string'&&c.replace(/\s/g,'').toLowerCase().includes('번호'));
-            nameCol=row.findIndex(c=>{if(typeof c!=='string')return false;const s=c.replace(/\s/g,'').toLowerCase();return s.includes('성명')||s.includes('이름');});
             break;
           }
         }
         
-        if(nameCol===-1||numCol===-1)return alert("'번호' 또는 '성명' 열을 찾을 수 없습니다.\n\n파일 형식 예: 학년, 반, 번호, 성명 또는 번호, 성명");
+        if(nameCol===-1||numCol===-1||headerRowIdx===-1){
+          return alert("'번호'와 '성명' 열을 찾을 수 없습니다.\n\n지원 형식:\n• 학년, 반, 번호, 성명\n• 번호, 성명");
+        }
         
         // 데이터 행 추출
         for(let i=headerRowIdx+1;i<json.length;i++){
           const row=json[i];
-          if(!Array.isArray(row)||!row.length)continue;
-          const name=String(row[nameCol]||'').trim();
-          const num=row[numCol]!=null?String(row[numCol]).trim():'';
-          if(name&&name!=='undefined'&&name!=='없음'&&String(num).trim()){
-            students.push({id:`s_${Date.now()}_${i}`,number:num,name,seatIdx:null,locked:false});
+          if(!Array.isArray(row)||row.length===0)continue;
+          
+          const nameCell=row[nameCol];
+          const numCell=row[numCol];
+          
+          const name=String(nameCell||'').trim();
+          const num=String(numCell||'').trim();
+          
+          // 유효한 데이터 확인
+          if(name&&name!=='undefined'&&name!=='없음'&&name!==''&&num&&num!==''){
+            students.push({
+              id:`s_${Date.now()}_${i}`,
+              number:num,
+              name:name,
+              seatIdx:null,
+              locked:false
+            });
           }
         }
         
-        if(!students.length)return alert("읽을 수 있는 학생 데이터가 없습니다.\n\n지원 형식:\n• 학년, 반, 번호, 성명\n• 번호, 성명\n\n파일을 확인해주세요.");
-        const cur=getCur();cur.students=students;
+        if(students.length===0){
+          return alert("읽을 수 있는 학생 데이터가 없습니다.\n\n• 번호 열과 성명 열이 모두 채워져 있는지 확인해주세요.");
+        }
+        
+        const cur=getCur();
+        cur.students=students;
         if(cur.totalSeats<students.length)cur.totalSeats=students.length;
         document.getElementById('count-input').value=cur.totalSeats;
-        saveData();syncUI();sequentialSeats();
+        
+        saveData();
+        syncUI();
+        sequentialSeats();
         showToast(`✅ ${students.length}명 업로드 완료!`);
-      }catch(err){console.error(err);alert('파일 읽기 오류');}
+      }catch(err){
+        console.error('파일 읽기 오류:',err);
+        alert('파일 읽기 오류가 발생했습니다.\n\n• 파일 형식을 확인해주세요\n• CSV나 XLSX 파일인지 확인해주세요');
+      }
       e.target.value='';
-    };r.readAsArrayBuffer(file);
+    };
+    r.readAsArrayBuffer(file);
   });
   loadData();
 });
